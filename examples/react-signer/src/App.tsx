@@ -104,9 +104,9 @@ function App() {
         {/* Turnkey Account */}
         {account && (
           <Section title="Turnkey Account">
-            <StatusRow label="Address" value={account.address} truncate />
+            <StatusRow label="Address" value={account.address} truncate copyable />
             {account.publicKey && (
-              <StatusRow label="Public Key" value={account.publicKey} truncate />
+              <StatusRow label="Public Key" value={account.publicKey} truncate copyable />
             )}
             <StatusRow label="Format" value={account.addressFormat} />
           </Section>
@@ -268,23 +268,50 @@ function StatusRow({
   value,
   isError = false,
   truncate: shouldTruncate = false,
+  copyable = false,
 }: {
   label: string;
   value: string;
   isError?: boolean;
   truncate?: boolean;
+  copyable?: boolean;
 }) {
+  const [justCopied, setJustCopied] = useState(false);
   const displayValue = shouldTruncate ? truncate(value, 24) : value;
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setJustCopied(true);
+      setTimeout(() => setJustCopied(false), 1200);
+    } catch {
+      // ignore — clipboard API may be blocked in insecure contexts
+    }
+  };
+
   return (
     <div style={styles.statusRow}>
       <span style={styles.statusLabel}>{label}:</span>
-      <span
-        style={{
-          ...styles.statusValue,
-          ...(isError ? styles.errorText : {}),
-        }}
-      >
-        {displayValue}
+      <span style={styles.statusValueGroup}>
+        <span
+          style={{
+            ...styles.statusValue,
+            ...(isError ? styles.errorText : {}),
+          }}
+        >
+          {displayValue}
+        </span>
+        {copyable && (
+          <button
+            type="button"
+            onClick={handleCopy}
+            style={styles.copyButton}
+            aria-label={`Copy ${label}`}
+            title={`Copy ${label}`}
+          >
+            {justCopied ? 'Copied!' : 'Copy'}
+          </button>
+        )}
       </span>
     </div>
   );
@@ -366,13 +393,30 @@ const styles: Record<string, React.CSSProperties> = {
     borderBottom: '1px solid #eee',
   },
   statusLabel: { color: '#666', fontSize: '0.85rem' },
+  statusValueGroup: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+    maxWidth: '60%',
+    justifyContent: 'flex-end',
+  },
   statusValue: {
     fontFamily: 'monospace',
     fontSize: '0.85rem',
     color: '#333',
-    maxWidth: '60%',
     textAlign: 'right',
     wordBreak: 'break-all',
+  },
+  copyButton: {
+    fontSize: '0.7rem',
+    fontWeight: 600,
+    color: '#ff5500',
+    background: 'white',
+    border: '1px solid #ff5500',
+    borderRadius: '4px',
+    padding: '0.15rem 0.4rem',
+    cursor: 'pointer',
+    flexShrink: 0,
   },
   errorText: { color: '#dc3545' },
   label: {
