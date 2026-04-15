@@ -18,7 +18,7 @@ export default defineConfig({
     }),
   ],
   optimizeDeps: {
-    exclude: ['@miden-sdk/miden-sdk'],
+    exclude: ['@miden-sdk/miden-sdk', '@miden-sdk/miden-sdk-original'],
   },
   build: {
     target: 'esnext',
@@ -27,8 +27,12 @@ export default defineConfig({
     alias: {
       '@miden-sdk/miden-turnkey': path.resolve(__dirname, '..', '..', 'src', 'index.ts'),
       '@miden-sdk/miden-turnkey-react': path.resolve(__dirname, '..', '..', 'packages', 'use-miden-turnkey-react', 'src', 'index.ts'),
-      '@miden-sdk/react': path.resolve(process.env.HOME!, 'miden', 'miden-client', 'packages', 'react-sdk', 'src', 'index.ts'),
-      '@miden-sdk/miden-sdk': path.resolve(__dirname, '..', '..', 'node_modules', '@miden-sdk', 'miden-sdk'),
+      // Workaround for @miden-sdk/react@0.14.x reading AuthScheme.AuthEcdsaK256Keccak
+      // from @miden-sdk/miden-sdk — the package's main export shadows the WASM enum
+      // with a string-constant object, so react's read evaluates to undefined.
+      // See src/miden-sdk-shim.ts for the patched re-export.
+      '@miden-sdk/miden-sdk-original': path.resolve(__dirname, '..', '..', 'node_modules', '@miden-sdk', 'miden-sdk'),
+      '@miden-sdk/miden-sdk': path.resolve(__dirname, 'src', 'miden-sdk-shim.ts'),
     },
     dedupe: ['@miden-sdk/miden-sdk', '@miden-sdk/react', 'react', 'react-dom'],
   },
