@@ -42,7 +42,12 @@ createRoot(document.getElementById('root')!).render(
       console.error(`[Turnkey][${phase}]`, err);
     }}
   >
-    <MidenProvider config={{ rpcUrl: 'devnet', prover: 'devnet' }}>
+    <MidenProvider
+      config={{
+        rpcUrl: 'https://rpc.devnet.miden.io',
+        prover: 'https://tx-prover.devnet.miden.io',
+      }}
+    >
       <App />
     </MidenProvider>
   </TurnkeySignerProvider>
