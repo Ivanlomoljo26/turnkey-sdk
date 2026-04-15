@@ -14,8 +14,5 @@ export {
   type WalletSelector,
   type AccountSelector,
 } from "./TurnkeySignerProvider";
-export type {
-  TurnkeySDKBrowserConfig,
-  TurnkeySDKClientConfig,
-} from "@turnkey/sdk-browser";
+export type { TurnkeyProviderConfig } from "@turnkey/react-wallet-kit";
 export { SignerContext, useSigner } from "@miden-sdk/react";

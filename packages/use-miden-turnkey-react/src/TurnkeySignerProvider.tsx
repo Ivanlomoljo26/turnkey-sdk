@@ -9,11 +9,11 @@ import {
   type ReactNode,
 } from "react";
 import {
-  Turnkey,
-  type TurnkeySDKBrowserConfig,
-  SessionType,
-} from "@turnkey/sdk-browser";
-import type { TurnkeyBrowserClient } from "@turnkey/sdk-browser";
+  TurnkeyProvider,
+  useTurnkey,
+  AuthState,
+  type TurnkeyProviderConfig,
+} from "@turnkey/react-wallet-kit";
 import type { WalletAccount, Wallet } from "@turnkey/core";
 import {
   SignerContext,
@@ -41,7 +41,7 @@ export type TurnkeySignerStatus =
 
 /**
  * Phase of an error reported via `onError`.
- *  - `connect`      : failure during the `connect()` flow (passkey login, wallet fetch)
+ *  - `connect`      : failure during the `connect()` flow (handleLogin modal)
  *  - `autoConnect`  : failure during automatic connection on mount
  *  - `buildContext` : failure while preparing the signer context (public-key commitment, etc.)
  *  - `sign`         : failure during a signing operation
@@ -72,16 +72,19 @@ export type AccountSelector =
 
 export interface TurnkeySignerProviderProps {
   children: ReactNode;
-  /** Turnkey SDK browser configuration (defaultOrganizationId is required; apiBaseUrl defaults to https://api.turnkey.com) */
-  config: Pick<TurnkeySDKBrowserConfig, "defaultOrganizationId"> &
-    Partial<Omit<TurnkeySDKBrowserConfig, "defaultOrganizationId">>;
+  /**
+   * Turnkey wallet-kit provider configuration. The `auth.methods` block
+   * controls which auth methods (passkey, email OTP, OAuth, ...) appear in
+   * the built-in login modal opened by `connect()`.
+   */
+  config: TurnkeyProviderConfig;
   /** Optional custom account components to include in the account (e.g. from a compiled .masp package) */
   customComponents?: SignerAccountConfig["customComponents"];
   /** Optional account ID to import instead of creating a new account */
   importAccountId?: string;
   /**
-   * If true, the provider attempts to connect automatically on mount when a
-   * valid Turnkey session already exists (no passkey prompt). Default: false.
+   * If true, the provider treats an existing wallet-kit session as connected
+   * on mount without showing the login modal. Default: true.
    */
   autoConnect?: boolean;
   /** Pick which wallet to use if the user has multiple. Defaults to the first. */
@@ -92,7 +95,7 @@ export interface TurnkeySignerProviderProps {
    */
   accountSelector?: AccountSelector;
   /** Called whenever the signer becomes connected. */
-  onConnect?: (account: WalletAccount, client: TurnkeyBrowserClient) => void;
+  onConnect?: (account: WalletAccount) => void;
   /** Called whenever the signer becomes disconnected. */
   onDisconnect?: () => void;
   /** Called whenever an error occurs. Second argument describes the lifecycle phase. */
@@ -103,10 +106,10 @@ export interface TurnkeySignerProviderProps {
  * Turnkey-specific extras exposed via useTurnkeySigner hook.
  */
 export interface TurnkeySignerExtras {
-  /** Turnkey browser client instance (null if not yet connected) */
-  client: TurnkeyBrowserClient | null;
   /** Connected account (null if not connected) */
   account: WalletAccount | null;
+  /** All wallets visible in the current Turnkey session. */
+  wallets: Wallet[];
   /** High-level signer status */
   status: TurnkeySignerStatus;
   /** Last error surfaced by the provider (cleared on successful connect). */
@@ -118,35 +121,15 @@ export interface TurnkeySignerExtras {
    */
   signMessage: (messageHex: string) => Promise<TurnkeyRawSignature>;
   /**
-   * Re-fetch wallets/accounts from Turnkey and re-select based on the
-   * configured `walletSelector`/`accountSelector`.
+   * Re-fetch wallets from Turnkey and re-select based on the configured
+   * `walletSelector`/`accountSelector`.
    */
   refresh: () => Promise<void>;
 }
 
-interface TurnkeySignerExtrasInternal extends TurnkeySignerExtras {
-  setAccount: (account: WalletAccount | null) => void;
-}
-
-const TurnkeySignerExtrasContext =
-  createContext<TurnkeySignerExtrasInternal | null>(null);
-
-/**
- * Signs a message using Turnkey's signRawPayload API.
- */
-async function signWithTurnkey(
-  messageHex: string,
-  client: TurnkeyBrowserClient,
-  account: WalletAccount,
-): Promise<TurnkeyRawSignature> {
-  const result = await client.signRawPayload({
-    signWith: account.address,
-    payload: messageHex,
-    encoding: "PAYLOAD_ENCODING_HEXADECIMAL",
-    hashFunction: "HASH_FUNCTION_KECCAK256",
-  });
-  return result;
-}
+const TurnkeySignerExtrasContext = createContext<TurnkeySignerExtras | null>(
+  null,
+);
 
 function resolveWallet(wallets: Wallet[], selector?: WalletSelector): Wallet {
   if (!wallets.length) throw new Error("No wallets found");
@@ -194,55 +177,34 @@ function resolveAccount(
 }
 
 /**
- * TurnkeySignerProvider wraps MidenProvider to enable Turnkey wallet signing.
- * Constructs a TurnkeyBrowserClient internally from the provided config.
- *
- * @example
- * ```tsx
- * <TurnkeySignerProvider
- *   config={{ defaultOrganizationId: "your-org-id" }}
- *   autoConnect
- *   onConnect={(acc) => console.log("connected:", acc.address)}
- * >
- *   <MidenProvider config={{ rpcUrl: "testnet" }}>
- *     <App />
- *   </MidenProvider>
- * </TurnkeySignerProvider>
- * ```
+ * Inner provider — runs inside `<TurnkeyProvider>` and bridges wallet-kit
+ * state into the Miden `SignerContext`.
  */
-const TURNKEY_DEFAULTS = {
-  apiBaseUrl: "https://api.turnkey.com",
-};
-
-export function TurnkeySignerProvider({
+function TurnkeySignerProviderInner({
   children,
-  config,
   customComponents,
   importAccountId,
-  autoConnect = false,
+  autoConnect,
   walletSelector,
   accountSelector,
   onConnect,
   onDisconnect,
   onError,
-}: TurnkeySignerProviderProps) {
-  const resolvedConfig: TurnkeySDKBrowserConfig = {
-    ...TURNKEY_DEFAULTS,
-    ...config,
-  };
+}: Omit<TurnkeySignerProviderProps, "config">) {
+  const {
+    httpClient,
+    session,
+    wallets,
+    authState,
+    handleLogin,
+    refreshWallets,
+    logout,
+  } = useTurnkey();
 
-  const turnkey = useMemo(
-    () => new Turnkey(resolvedConfig),
-    [resolvedConfig.apiBaseUrl, resolvedConfig.defaultOrganizationId],
-  );
-
-  const [client, setClient] = useState<TurnkeyBrowserClient | null>(null);
   const [account, setAccount] = useState<WalletAccount | null>(null);
-  const [isConnected, setIsConnected] = useState(false);
   const [status, setStatus] = useState<TurnkeySignerStatus>("idle");
   const [error, setError] = useState<Error | null>(null);
 
-  // Keep latest callback refs so connect/disconnect identity is stable.
   const onConnectRef = useRef(onConnect);
   const onDisconnectRef = useRef(onDisconnect);
   const onErrorRef = useRef(onError);
@@ -262,136 +224,122 @@ export function TurnkeySignerProvider({
     [],
   );
 
-  /** Shared flow: fetch wallets using an already-authenticated client and select the account. */
-  const pickAccountFromClient = useCallback(
-    async (
-      indexedDbClient: TurnkeyBrowserClient,
-    ): Promise<WalletAccount> => {
-      const { wallets } = await indexedDbClient.getWallets();
-      const chosenWallet = resolveWallet(wallets as Wallet[], walletSelector);
-      const { accounts } = await indexedDbClient.getWalletAccounts({
-        walletId: chosenWallet.walletId,
-      });
-      return resolveAccount(accounts as WalletAccount[], accountSelector);
-    },
-    [walletSelector, accountSelector],
-  );
+  /** Pick wallet + account from the wallet-kit `wallets` array. */
+  const pickAccount = useCallback((): WalletAccount => {
+    const chosenWallet = resolveWallet(wallets as Wallet[], walletSelector);
+    return resolveAccount(
+      chosenWallet.accounts as WalletAccount[],
+      accountSelector,
+    );
+  }, [wallets, walletSelector, accountSelector]);
+
+  // React to wallet-kit auth state transitions.
+  const wasConnectedRef = useRef(false);
+  useEffect(() => {
+    const isAuthed = authState === AuthState.Authenticated;
+
+    if (!isAuthed) {
+      if (wasConnectedRef.current) {
+        wasConnectedRef.current = false;
+        setAccount(null);
+        setStatus("idle");
+        setError(null);
+        onDisconnectRef.current?.();
+      }
+      return;
+    }
+
+    if (!wallets.length) return;
+
+    try {
+      const acct = pickAccount();
+      setAccount(acct);
+      setStatus("connected");
+      setError(null);
+      if (!wasConnectedRef.current) {
+        wasConnectedRef.current = true;
+        onConnectRef.current?.(acct);
+      }
+    } catch (e) {
+      reportError(e, "buildContext");
+    }
+  }, [authState, wallets, pickAccount, reportError]);
 
   const connect = useCallback(async () => {
+    if (authState === AuthState.Authenticated) return;
     setStatus("connecting");
     setError(null);
     try {
-      // 1. Create IndexedDB client and initialize its keypair
-      const indexedDbClient = await turnkey.indexedDbClient();
-      await indexedDbClient.init();
-
-      // 2. Only login if no existing session
-      const existingSession = await turnkey.getSession();
-      if (!existingSession) {
-        const passkeyClient = turnkey.passkeyClient();
-        await passkeyClient.loginWithPasskey({
-          sessionType: SessionType.READ_WRITE,
-          publicKey: (await indexedDbClient.getPublicKey())!,
-        });
-      }
-
-      // 3. Pick wallet + account via configured selectors
-      const acct = await pickAccountFromClient(indexedDbClient);
-
-      // 4. Set connected
-      setClient(indexedDbClient);
-      setAccount(acct);
-      setIsConnected(true);
-      setStatus("connected");
-      onConnectRef.current?.(acct, indexedDbClient);
+      await handleLogin();
     } catch (e) {
       reportError(e, "connect");
       throw e;
     }
-  }, [turnkey, pickAccountFromClient, reportError]);
+  }, [authState, handleLogin, reportError]);
 
   const disconnect = useCallback(async () => {
-    setAccount(null);
-    setIsConnected(false);
-    setStatus("idle");
-    setError(null);
-    onDisconnectRef.current?.();
-  }, []);
-
-  // Allow external setting of account (for apps that handle auth themselves)
-  const setConnectedAccount = useCallback((acc: WalletAccount | null) => {
-    setAccount(acc);
-    setIsConnected(acc !== null);
-    setStatus(acc !== null ? "connected" : "idle");
-    if (acc !== null) setError(null);
-  }, []);
-
-  // Auto-connect on mount if requested AND a session already exists
-  // (we don't want to silently trigger a passkey prompt).
-  useEffect(() => {
-    if (!autoConnect) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const existing = await turnkey.getSession();
-        if (!existing || cancelled) return;
-        const idb = await turnkey.indexedDbClient();
-        await idb.init();
-        const acct = await pickAccountFromClient(idb);
-        if (cancelled) return;
-        setClient(idb);
-        setAccount(acct);
-        setIsConnected(true);
-        setStatus("connected");
-        onConnectRef.current?.(acct, idb);
-      } catch (e) {
-        if (!cancelled) reportError(e, "autoConnect");
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [autoConnect, turnkey, pickAccountFromClient, reportError]);
+    try {
+      await logout();
+    } catch (e) {
+      reportError(e, "connect");
+      throw e;
+    }
+  }, [logout, reportError]);
 
   const refresh = useCallback(async () => {
-    if (!client) throw new Error("Cannot refresh: Turnkey client not connected");
     try {
-      const acct = await pickAccountFromClient(client);
+      await refreshWallets();
+      const acct = pickAccount();
       setAccount(acct);
-      setIsConnected(true);
       setStatus("connected");
     } catch (e) {
       reportError(e, "buildContext");
       throw e;
     }
-  }, [client, pickAccountFromClient, reportError]);
+  }, [refreshWallets, pickAccount, reportError]);
+
+  const signRaw = useCallback(
+    async (messageHex: string): Promise<TurnkeyRawSignature> => {
+      if (!httpClient || !account) {
+        throw new Error("Turnkey wallet not connected");
+      }
+      // Use the raw httpClient instead of handleSignMessage so signing
+      // happens without opening a confirmation modal — Miden transactions
+      // call signCb many times per flow.
+      const result = await httpClient.signRawPayload({
+        signWith: account.address,
+        payload: messageHex,
+        encoding: "PAYLOAD_ENCODING_HEXADECIMAL",
+        hashFunction: "HASH_FUNCTION_KECCAK256",
+      });
+      return result as TurnkeyRawSignature;
+    },
+    [httpClient, account],
+  );
 
   const signMessage = useCallback(
     async (messageHex: string): Promise<TurnkeyRawSignature> => {
-      if (!client || !account) {
-        throw new Error("Turnkey wallet not connected");
-      }
       try {
-        return await signWithTurnkey(messageHex, client, account);
+        return await signRaw(messageHex);
       } catch (e) {
         reportError(e, "sign");
         throw e;
       }
     },
-    [client, account, reportError],
+    [signRaw, reportError],
   );
 
-  // Build signer context
+  // Build signer context for MidenProvider
   const [signerContext, setSignerContext] = useState<SignerContextValue | null>(
     null,
   );
 
   useEffect(() => {
     let cancelled = false;
+    const isAuthed = authState === AuthState.Authenticated;
 
     async function buildContext() {
-      if (!isConnected || !account) {
-        // Not connected - provide context with connect/disconnect but no signing capability
+      if (!isAuthed || !account) {
         setSignerContext({
           signCb: async () => {
             throw new Error("Turnkey wallet not connected");
@@ -407,7 +355,6 @@ export function TurnkeySignerProvider({
       }
 
       try {
-        // Connected - build full context with signing capability
         const compressedPublicKey = account.publicKey;
         if (!compressedPublicKey) {
           throw new Error("Account has no public key");
@@ -417,13 +364,11 @@ export function TurnkeySignerProvider({
         const commitmentBytes = commitment.serialize();
 
         const signCb = async (_: Uint8Array, signingInputs: Uint8Array) => {
-          if (!client) throw new Error("Turnkey client not available");
           try {
             const { SigningInputs } = await import("@miden-sdk/miden-sdk");
             const inputs = SigningInputs.deserialize(signingInputs);
             const messageHex = inputs.toCommitment().toHex();
-
-            const sig = await signWithTurnkey(messageHex, client, account);
+            const sig = await signRaw(messageHex);
             return fromTurnkeySig(sig);
           } catch (e) {
             reportError(e, "sign");
@@ -431,27 +376,26 @@ export function TurnkeySignerProvider({
           }
         };
 
-        if (!cancelled) {
-          const { AccountStorageMode } = await import("@miden-sdk/miden-sdk");
+        if (cancelled) return;
 
-          setSignerContext({
-            signCb,
-            accountConfig: {
-              publicKeyCommitment: commitmentBytes,
-              accountType: "RegularAccountImmutableCode",
-              storageMode: AccountStorageMode.public(),
-              ...(customComponents?.length ? { customComponents } : {}),
-              ...(importAccountId ? { importAccountId } : {}),
-            },
-            storeName: `turnkey_${account.address}`,
-            name: "Turnkey",
-            isConnected: true,
-            connect,
-            disconnect,
-          });
-        }
+        const { AccountStorageMode } = await import("@miden-sdk/miden-sdk");
+
+        setSignerContext({
+          signCb,
+          accountConfig: {
+            publicKeyCommitment: commitmentBytes,
+            accountType: "RegularAccountImmutableCode",
+            storageMode: AccountStorageMode.public(),
+            ...(customComponents?.length ? { customComponents } : {}),
+            ...(importAccountId ? { importAccountId } : {}),
+          },
+          storeName: `turnkey_${account.address}`,
+          name: "Turnkey",
+          isConnected: true,
+          connect,
+          disconnect,
+        });
       } catch (e) {
-        console.error("Failed to build Turnkey signer context:", e);
         if (!cancelled) {
           reportError(e, "buildContext");
           setSignerContext({
@@ -474,9 +418,9 @@ export function TurnkeySignerProvider({
       cancelled = true;
     };
   }, [
-    isConnected,
+    authState,
     account,
-    client,
+    signRaw,
     connect,
     disconnect,
     importAccountId,
@@ -484,27 +428,29 @@ export function TurnkeySignerProvider({
     reportError,
   ]);
 
-  // Extended extras context with setAccount
-  const extrasValue = useMemo<TurnkeySignerExtrasInternal>(
+  const extrasValue = useMemo<TurnkeySignerExtras>(
     () => ({
-      client,
       account,
+      wallets: wallets as Wallet[],
       status,
       error,
       signMessage,
       refresh,
-      setAccount: setConnectedAccount,
     }),
-    [
-      client,
-      account,
-      status,
-      error,
-      signMessage,
-      refresh,
-      setConnectedAccount,
-    ],
+    [account, wallets, status, error, signMessage, refresh],
   );
+
+  // wallet-kit restores persisted sessions on mount. Setting autoConnect=false
+  // signals the app wants to start logged out, so the first time we observe an
+  // authenticated session under that flag we tear it down.
+  const didInitialAutoConnectCheckRef = useRef(false);
+  useEffect(() => {
+    if (autoConnect !== false) return;
+    if (didInitialAutoConnectCheckRef.current) return;
+    if (authState !== AuthState.Authenticated) return;
+    didInitialAutoConnectCheckRef.current = true;
+    logout().catch((e) => reportError(e, "autoConnect"));
+  }, [autoConnect, authState, logout, reportError]);
 
   return (
     <TurnkeySignerExtrasContext.Provider value={extrasValue}>
@@ -516,22 +462,55 @@ export function TurnkeySignerProvider({
 }
 
 /**
+ * TurnkeySignerProvider wraps Turnkey's React wallet kit and exposes a Miden
+ * `SignerContext`, so `useSigner()` and `useTurnkeySigner()` work side-by-side
+ * with the rest of the Miden React SDK.
+ *
+ * `connect()` opens the built-in wallet-kit login modal, which displays every
+ * auth method (passkey, email OTP, OAuth, ...) enabled in your Turnkey org.
+ *
+ * @example
+ * ```tsx
+ * <TurnkeySignerProvider
+ *   config={{
+ *     organizationId: "your-org-id",
+ *     auth: { methods: { passkeyAuthEnabled: true, emailOtpAuthEnabled: true } },
+ *   }}
+ *   onConnect={(acc) => console.log("connected:", acc.address)}
+ * >
+ *   <MidenProvider config={{ rpcUrl: "testnet" }}>
+ *     <App />
+ *   </MidenProvider>
+ * </TurnkeySignerProvider>
+ * ```
+ */
+export function TurnkeySignerProvider({
+  children,
+  config,
+  ...inner
+}: TurnkeySignerProviderProps) {
+  return (
+    <TurnkeyProvider config={config}>
+      <TurnkeySignerProviderInner {...inner}>
+        {children}
+      </TurnkeySignerProviderInner>
+    </TurnkeyProvider>
+  );
+}
+
+/**
  * Hook for Turnkey-specific extras beyond the unified useSigner interface.
- * Use this to access the Turnkey client, set the account, inspect status/errors,
+ * Use this to access the connected account, all wallets, status/error,
  * sign arbitrary messages, or force a refresh of wallet/account data.
  *
  * @example
  * ```tsx
- * const { client, account, status, error, signMessage, refresh, setAccount, isConnected } =
+ * const { account, wallets, status, error, signMessage, refresh, isConnected } =
  *   useTurnkeySigner();
- *
- * // After Turnkey auth flow completes:
- * setAccount(walletAccount);
  * ```
  */
 export function useTurnkeySigner(): TurnkeySignerExtras & {
   isConnected: boolean;
-  setAccount: (account: WalletAccount | null) => void;
 } {
   const extras = useContext(TurnkeySignerExtrasContext);
   const signer = useContext(SignerContext);
