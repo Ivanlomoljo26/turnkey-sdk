@@ -312,7 +312,7 @@ function TurnkeySignerProviderInner({
         encoding: "PAYLOAD_ENCODING_HEXADECIMAL",
         hashFunction: "HASH_FUNCTION_KECCAK256",
       });
-      return result as TurnkeyRawSignature;
+      return { r: result.r, s: result.s, v: result.v };
     },
     [httpClient, account],
   );
