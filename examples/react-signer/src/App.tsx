@@ -1,32 +1,75 @@
+import { useState } from 'react';
 import { useSigner, useMiden, useAccount, useSyncState } from '@miden-sdk/react';
 import { useTurnkeySigner } from '@miden-sdk/miden-turnkey-react';
 
 function App() {
-  // Get signer context (from TurnkeySignerProvider)
+  // Unified signer context (from TurnkeySignerProvider)
   const signer = useSigner();
 
-  // Get Turnkey-specific state
-  const { account } = useTurnkeySigner();
+  // Turnkey-specific state (extended API: status, error, signMessage, refresh)
+  const {
+    account,
+    status,
+    error,
+    signMessage,
+    refresh,
+  } = useTurnkeySigner();
 
-  // Get Miden client state
-  const { isReady, isInitializing, error, signerAccountId, sync } = useMiden();
+  // Miden client state
+  const { isReady, isInitializing, error: midenError, signerAccountId, sync } = useMiden();
 
-  // Get sync state
+  // Sync state
   const { syncHeight, isSyncing, lastSyncTime } = useSyncState();
 
-  // Get account details when we have a signer account
+  // Account details when a signer account exists
   const accountResult = useAccount(signerAccountId ?? undefined);
 
+  // Local state for the "sign arbitrary message" demo
+  const [rawMessage, setRawMessage] = useState(
+    '0x68656c6c6f2066726f6d206d6964656e2074757274',
+  );
+  const [lastSig, setLastSig] = useState<{ r: string; s: string; v: string } | null>(null);
+  const [signError, setSignError] = useState<string | null>(null);
+  const [isSigning, setIsSigning] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+
   const handleConnect = async () => {
-    if (signer?.isConnected) {
-      await signer.disconnect();
-    } else {
-      await signer?.connect();
-    }
+    if (signer?.isConnected) await signer.disconnect();
+    else await signer?.connect();
   };
 
   const handleSync = async () => {
     await sync();
+  };
+
+  const handleSign = async () => {
+    if (!rawMessage) return;
+    setIsSigning(true);
+    setSignError(null);
+    try {
+      const sig = await signMessage(rawMessage);
+      setLastSig(sig);
+    } catch (e) {
+      setSignError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setIsSigning(false);
+    }
+  };
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await refresh();
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const statusColor: Record<string, string> = {
+    idle: '#888',
+    connecting: '#ff9500',
+    connected: '#22aa55',
+    error: '#dc3545',
   };
 
   return (
@@ -34,34 +77,44 @@ function App() {
       <div style={styles.card}>
         <h1 style={styles.title}>Miden + Turnkey Signer Integration</h1>
         <p style={styles.subtitle}>
-          Using TurnkeySignerProvider with MidenProvider
+          Demonstrates TurnkeySignerProvider + MidenProvider with the unified signer
+          interface.
         </p>
 
-        {/* Connection Status */}
-        <div style={styles.section}>
-          <h2 style={styles.sectionTitle}>Connection Status</h2>
+        {/* Status banner */}
+        <div
+          style={{
+            ...styles.banner,
+            background: statusColor[status] ?? '#888',
+          }}
+        >
+          Status: {status.toUpperCase()}
+          {status === 'error' && error ? ` — ${error.message}` : ''}
+        </div>
+
+        {/* Connection */}
+        <Section title="Connection">
           <StatusRow label="Signer Connected" value={signer?.isConnected ? 'Yes' : 'No'} />
           <StatusRow label="Signer Name" value={signer?.name ?? 'None'} />
           <StatusRow label="Miden Ready" value={isReady ? 'Yes' : 'No'} />
           <StatusRow label="Initializing" value={isInitializing ? 'Yes' : 'No'} />
-          {error && <StatusRow label="Error" value={error.message} isError />}
-        </div>
+          {midenError && <StatusRow label="Miden Error" value={midenError.message} isError />}
+        </Section>
 
-        {/* Turnkey Account Info */}
+        {/* Turnkey Account */}
         {account && (
-          <div style={styles.section}>
-            <h2 style={styles.sectionTitle}>Turnkey Account</h2>
+          <Section title="Turnkey Account">
             <StatusRow label="Address" value={account.address} truncate />
             {account.publicKey && (
               <StatusRow label="Public Key" value={account.publicKey} truncate />
             )}
-          </div>
+            <StatusRow label="Format" value={account.addressFormat} />
+          </Section>
         )}
 
         {/* Miden Account */}
         {signerAccountId && (
-          <div style={styles.section}>
-            <h2 style={styles.sectionTitle}>Miden Account</h2>
+          <Section title="Miden Account">
             <StatusRow label="Account ID" value={signerAccountId} truncate />
             {accountResult.account && (
               <>
@@ -75,26 +128,24 @@ function App() {
                 />
               </>
             )}
-          </div>
+          </Section>
         )}
 
         {/* Sync State */}
         {isReady && (
-          <div style={styles.section}>
-            <h2 style={styles.sectionTitle}>Sync State</h2>
+          <Section title="Sync State">
             <StatusRow label="Block Height" value={syncHeight.toString()} />
             <StatusRow label="Syncing" value={isSyncing ? 'Yes' : 'No'} />
             <StatusRow
               label="Last Sync"
               value={lastSyncTime ? new Date(lastSyncTime).toLocaleTimeString() : 'Never'}
             />
-          </div>
+          </Section>
         )}
 
-        {/* Asset Balances */}
+        {/* Balances */}
         {accountResult.assets.length > 0 && (
-          <div style={styles.section}>
-            <h2 style={styles.sectionTitle}>Balances</h2>
+          <Section title="Balances">
             {accountResult.assets.map((asset) => (
               <StatusRow
                 key={asset.assetId}
@@ -102,7 +153,40 @@ function App() {
                 value={`${asset.amount.toString()} (${truncate(asset.assetId, 16)})`}
               />
             ))}
-          </div>
+          </Section>
+        )}
+
+        {/* Arbitrary message signing — exercises the new signMessage() API */}
+        {signer?.isConnected && (
+          <Section title="Sign Arbitrary Message">
+            <label style={styles.label} htmlFor="msg">
+              Hex payload
+            </label>
+            <input
+              id="msg"
+              style={styles.input}
+              value={rawMessage}
+              onChange={(e) => setRawMessage(e.target.value)}
+              placeholder="0x..."
+            />
+            <div style={styles.inlineButtons}>
+              <button
+                style={styles.button}
+                onClick={handleSign}
+                disabled={isSigning || !rawMessage}
+              >
+                {isSigning ? 'Signing...' : 'Sign with Turnkey'}
+              </button>
+            </div>
+            {signError && (
+              <p style={{ ...styles.errorText, marginTop: '0.5rem' }}>{signError}</p>
+            )}
+            {lastSig && (
+              <pre style={styles.sigBlock}>
+                {JSON.stringify(lastSig, null, 2)}
+              </pre>
+            )}
+          </Section>
         )}
 
         {/* Actions */}
@@ -110,9 +194,24 @@ function App() {
           <button
             style={signer?.isConnected ? styles.buttonSecondary : styles.button}
             onClick={handleConnect}
+            disabled={status === 'connecting'}
           >
-            {signer?.isConnected ? 'Disconnect' : 'Connect'}
+            {status === 'connecting'
+              ? 'Connecting...'
+              : signer?.isConnected
+                ? 'Disconnect'
+                : 'Connect'}
           </button>
+
+          {signer?.isConnected && (
+            <button
+              style={styles.buttonSecondary}
+              onClick={handleRefresh}
+              disabled={refreshing}
+            >
+              {refreshing ? 'Refreshing...' : 'Refresh wallet'}
+            </button>
+          )}
 
           {isReady && (
             <button
@@ -125,21 +224,36 @@ function App() {
           )}
         </div>
 
-        {/* Debug Info */}
+        {/* Debug */}
         <details style={styles.debug}>
           <summary style={styles.debugSummary}>Debug Info</summary>
           <pre style={styles.debugContent}>
-            {JSON.stringify({
-              signerConnected: signer?.isConnected,
-              signerName: signer?.name,
-              isReady,
-              isInitializing,
-              signerAccountId,
-              turnkeyAddress: account?.address,
-            }, null, 2)}
+            {JSON.stringify(
+              {
+                status,
+                signerConnected: signer?.isConnected,
+                signerName: signer?.name,
+                isReady,
+                isInitializing,
+                signerAccountId,
+                turnkeyAddress: account?.address,
+                error: error?.message,
+              },
+              null,
+              2,
+            )}
           </pre>
         </details>
       </div>
+    </div>
+  );
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div style={styles.section}>
+      <h2 style={styles.sectionTitle}>{title}</h2>
+      {children}
     </div>
   );
 }
@@ -148,7 +262,7 @@ function StatusRow({
   label,
   value,
   isError = false,
-  truncate: shouldTruncate = false
+  truncate: shouldTruncate = false,
 }: {
   label: string;
   value: string;
@@ -159,10 +273,12 @@ function StatusRow({
   return (
     <div style={styles.statusRow}>
       <span style={styles.statusLabel}>{label}:</span>
-      <span style={{
-        ...styles.statusValue,
-        ...(isError ? styles.errorText : {})
-      }}>
+      <span
+        style={{
+          ...styles.statusValue,
+          ...(isError ? styles.errorText : {}),
+        }}
+      >
         {displayValue}
       </span>
     </div>
@@ -188,18 +304,28 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '12px',
     boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
     padding: '2rem',
-    maxWidth: '500px',
+    maxWidth: '560px',
     width: '100%',
   },
   title: {
     fontSize: '1.5rem',
     fontWeight: 'bold',
     color: '#333',
-    marginBottom: '0.5rem',
+    marginBottom: '0.25rem',
   },
   subtitle: {
     color: '#666',
-    marginBottom: '1.5rem',
+    marginBottom: '1rem',
+    fontSize: '0.9rem',
+  },
+  banner: {
+    color: 'white',
+    padding: '0.5rem 0.75rem',
+    borderRadius: '6px',
+    fontSize: '0.8rem',
+    fontWeight: 600,
+    letterSpacing: '0.05em',
+    marginBottom: '1rem',
   },
   section: {
     background: '#f8f9fa',
@@ -208,11 +334,11 @@ const styles: Record<string, React.CSSProperties> = {
     marginBottom: '1rem',
   },
   sectionTitle: {
-    fontSize: '0.875rem',
-    fontWeight: '600',
+    fontSize: '0.8rem',
+    fontWeight: 600,
     color: '#ff5500',
     marginBottom: '0.75rem',
-    textTransform: 'uppercase' as const,
+    textTransform: 'uppercase',
     letterSpacing: '0.05em',
   },
   statusRow: {
@@ -222,31 +348,56 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '0.25rem 0',
     borderBottom: '1px solid #eee',
   },
-  statusLabel: {
-    color: '#666',
-    fontSize: '0.875rem',
-  },
+  statusLabel: { color: '#666', fontSize: '0.85rem' },
   statusValue: {
     fontFamily: 'monospace',
-    fontSize: '0.875rem',
+    fontSize: '0.85rem',
     color: '#333',
     maxWidth: '60%',
-    textAlign: 'right' as const,
-    wordBreak: 'break-all' as const,
+    textAlign: 'right',
+    wordBreak: 'break-all',
   },
-  errorText: {
-    color: '#dc3545',
+  errorText: { color: '#dc3545' },
+  label: {
+    display: 'block',
+    color: '#666',
+    fontSize: '0.8rem',
+    marginBottom: '0.25rem',
+  },
+  input: {
+    width: '100%',
+    padding: '0.5rem 0.75rem',
+    fontSize: '0.85rem',
+    fontFamily: 'monospace',
+    border: '1px solid #ddd',
+    borderRadius: '6px',
+    marginBottom: '0.5rem',
+  },
+  inlineButtons: {
+    display: 'flex',
+    gap: '0.5rem',
+  },
+  sigBlock: {
+    background: '#fff',
+    border: '1px solid #eee',
+    borderRadius: '6px',
+    padding: '0.5rem',
+    marginTop: '0.5rem',
+    fontSize: '0.75rem',
+    overflow: 'auto',
   },
   buttonGroup: {
     display: 'flex',
-    gap: '0.75rem',
+    gap: '0.5rem',
     marginTop: '1rem',
+    flexWrap: 'wrap',
   },
   button: {
     flex: 1,
-    padding: '0.75rem 1rem',
-    fontSize: '1rem',
-    fontWeight: '600',
+    minWidth: '120px',
+    padding: '0.7rem 1rem',
+    fontSize: '0.95rem',
+    fontWeight: 600,
     color: 'white',
     background: '#ff5500',
     border: 'none',
@@ -255,9 +406,10 @@ const styles: Record<string, React.CSSProperties> = {
   },
   buttonSecondary: {
     flex: 1,
-    padding: '0.75rem 1rem',
-    fontSize: '1rem',
-    fontWeight: '600',
+    minWidth: '120px',
+    padding: '0.7rem 1rem',
+    fontSize: '0.95rem',
+    fontWeight: 600,
     color: '#ff5500',
     background: 'white',
     border: '2px solid #ff5500',
