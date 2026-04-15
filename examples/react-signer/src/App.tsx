@@ -115,7 +115,7 @@ function App() {
         {/* Miden Account */}
         {signerAccountId && (
           <Section title="Miden Account">
-            <StatusRow label="Account ID" value={signerAccountId} truncate />
+            <StatusRow label="Account ID" value={signerAccountId} truncate copyable />
             {accountResult.account && (
               <>
                 <StatusRow
