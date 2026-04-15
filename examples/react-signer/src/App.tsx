@@ -158,35 +158,40 @@ function App() {
 
         {/* Arbitrary message signing — exercises the new signMessage() API */}
         {signer?.isConnected && (
-          <Section title="Sign Arbitrary Message">
-            <label style={styles.label} htmlFor="msg">
-              Hex payload
-            </label>
-            <input
-              id="msg"
-              style={styles.input}
-              value={rawMessage}
-              onChange={(e) => setRawMessage(e.target.value)}
-              placeholder="0x..."
-            />
-            <div style={styles.inlineButtons}>
-              <button
-                style={styles.button}
-                onClick={handleSign}
-                disabled={isSigning || !rawMessage}
-              >
-                {isSigning ? 'Signing...' : 'Sign with Turnkey'}
-              </button>
+          <details style={styles.section}>
+            <summary style={styles.collapsibleSectionTitle}>
+              Sign Arbitrary Message
+            </summary>
+            <div style={styles.collapsibleBody}>
+              <label style={styles.label} htmlFor="msg">
+                Hex payload
+              </label>
+              <input
+                id="msg"
+                style={styles.input}
+                value={rawMessage}
+                onChange={(e) => setRawMessage(e.target.value)}
+                placeholder="0x..."
+              />
+              <div style={styles.inlineButtons}>
+                <button
+                  style={styles.button}
+                  onClick={handleSign}
+                  disabled={isSigning || !rawMessage}
+                >
+                  {isSigning ? 'Signing...' : 'Sign with Turnkey'}
+                </button>
+              </div>
+              {signError && (
+                <p style={{ ...styles.errorText, marginTop: '0.5rem' }}>{signError}</p>
+              )}
+              {lastSig && (
+                <pre style={styles.sigBlock}>
+                  {JSON.stringify(lastSig, null, 2)}
+                </pre>
+              )}
             </div>
-            {signError && (
-              <p style={{ ...styles.errorText, marginTop: '0.5rem' }}>{signError}</p>
-            )}
-            {lastSig && (
-              <pre style={styles.sigBlock}>
-                {JSON.stringify(lastSig, null, 2)}
-              </pre>
-            )}
-          </Section>
+          </details>
         )}
 
         {/* Actions */}
@@ -340,6 +345,18 @@ const styles: Record<string, React.CSSProperties> = {
     marginBottom: '0.75rem',
     textTransform: 'uppercase',
     letterSpacing: '0.05em',
+  },
+  collapsibleSectionTitle: {
+    fontSize: '0.8rem',
+    fontWeight: 600,
+    color: '#ff5500',
+    textTransform: 'uppercase',
+    letterSpacing: '0.05em',
+    cursor: 'pointer',
+    userSelect: 'none',
+  },
+  collapsibleBody: {
+    marginTop: '0.75rem',
   },
   statusRow: {
     display: 'flex',
