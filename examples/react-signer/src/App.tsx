@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useSigner, useMiden, useSyncState, useNotes, useConsume } from '@miden-sdk/react';
+import { useSigner, useMiden, useSyncState, useNotes, useConsume, useSend } from '@miden-sdk/react';
 import { useTurnkeySigner } from '@miden-sdk/miden-turnkey-react';
 
 function App() {
@@ -324,6 +324,15 @@ function MidenDashboard({ signerAccountId, sync }: { signerAccountId: string; sy
         </div>
       </Section>
 
+      {/* Send tokens */}
+      {!isSyncing && balances.length > 0 && (
+        <SendSection
+          accountId={signerAccountId}
+          balances={balances}
+          onComplete={fetchBalance}
+        />
+      )}
+
       {/* Notes — only when sync is idle */}
       {!isSyncing && (
         <NotesSection accountId={signerAccountId} onSyncRequest={sync} />
@@ -390,6 +399,95 @@ function NotesSection({ accountId, onSyncRequest }: { accountId: string; onSyncR
         </button>
       </div>
     </Section>
+  );
+}
+
+/**
+ * Send tokens to another Miden address. Uses useSend() which only fires WASM
+ * calls on user click, not on mount — safe from borrow conflicts.
+ */
+function SendSection({
+  accountId,
+  balances,
+  onComplete,
+}: {
+  accountId: string;
+  balances: { assetId: string; amount: string; decimals: number }[];
+  onComplete: () => Promise<void>;
+}) {
+  const { send, isLoading, stage, error: sendError, reset } = useSend();
+  const [recipient, setRecipient] = useState('');
+  const [amount, setAmount] = useState('');
+  const [txId, setTxId] = useState<string | null>(null);
+
+  // Use the first balance entry as the default asset
+  const defaultAsset = balances[0];
+
+  const handleSend = async () => {
+    if (!recipient || !amount || !defaultAsset) return;
+    reset();
+    setTxId(null);
+    try {
+      const rawAmount = BigInt(
+        Math.round(parseFloat(amount) * 10 ** defaultAsset.decimals),
+      );
+      const result = await send({
+        from: accountId,
+        to: recipient,
+        assetId: defaultAsset.assetId,
+        amount: rawAmount,
+        noteType: 'public',
+      });
+      console.log('[Miden] Sent! TX:', result.txId);
+      setTxId(result.txId);
+      setAmount('');
+      await onComplete();
+    } catch (e) {
+      console.error('[Miden] Send failed:', e);
+    }
+  };
+
+  return (
+    <details style={styles.section}>
+      <summary style={styles.collapsibleSectionTitle}>
+        Send Tokens
+      </summary>
+      <div style={styles.collapsibleBody}>
+        <label style={styles.label}>Recipient (bech32 address)</label>
+        <input
+          style={styles.input}
+          value={recipient}
+          onChange={(e) => setRecipient(e.target.value)}
+          placeholder="mdev1..."
+        />
+        <label style={styles.label}>Amount</label>
+        <input
+          style={styles.input}
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+          placeholder="e.g. 10"
+          type="number"
+          step="any"
+        />
+        {sendError && (
+          <p style={{ ...styles.errorText, marginTop: '0.5rem' }}>{sendError.message}</p>
+        )}
+        {txId && (
+          <p style={{ color: '#22aa55', fontSize: '0.8rem', marginTop: '0.5rem' }}>
+            Sent! TX: {truncate(txId, 24)}
+          </p>
+        )}
+        <div style={{ ...styles.inlineButtons, marginTop: '0.5rem' }}>
+          <button
+            style={styles.button}
+            onClick={handleSend}
+            disabled={isLoading || !recipient || !amount}
+          >
+            {isLoading ? `Sending... (${stage})` : 'Send'}
+          </button>
+        </div>
+      </div>
+    </details>
   );
 }
 
