@@ -324,14 +324,12 @@ function MidenDashboard({ signerAccountId, sync }: { signerAccountId: string; sy
         </div>
       </Section>
 
-      {/* Send tokens */}
-      {!isSyncing && (
-        <SendSection
-          accountId={signerAccountId}
-          balances={balances}
-          onComplete={fetchBalance}
-        />
-      )}
+      {/* Send tokens — safe to keep mounted during sync (useSend only fires on click) */}
+      <SendSection
+        accountId={signerAccountId}
+        balances={balances}
+        onComplete={fetchBalance}
+      />
 
       {/* Notes — only when sync is idle */}
       {!isSyncing && (
