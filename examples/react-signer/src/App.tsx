@@ -15,30 +15,8 @@ function App() {
     refresh,
   } = useTurnkeySigner();
 
-  // Miden client state
+  // Miden client state — only isReady/isInitializing/error are safe to read during init
   const { isReady, isInitializing, error: midenError, signerAccountId, sync } = useMiden();
-
-  // Sync state
-  const { syncHeight, isSyncing, lastSyncTime } = useSyncState();
-
-  // Account details when a signer account exists
-  const accountResult = useAccount(signerAccountId ?? undefined);
-
-  // Convert hex Account ID to bech32 (what faucets/explorers expect)
-  const [bech32AccountId, setBech32AccountId] = useState<string | null>(null);
-  useEffect(() => {
-    if (!signerAccountId) { setBech32AccountId(null); return; }
-    (async () => {
-      try {
-        const { AccountId, Address, NetworkId } = await import('@miden-sdk/miden-sdk');
-        const id = AccountId.fromHex(signerAccountId);
-        const addr = Address.fromAccountId(id, 'BasicWallet');
-        setBech32AccountId(addr.toBech32(NetworkId.devnet()));
-      } catch (e) {
-        console.warn('bech32 conversion failed:', e);
-      }
-    })();
-  }, [signerAccountId]);
 
   // Local state for the "sign arbitrary message" demo
   const [rawMessage, setRawMessage] = useState(
@@ -49,14 +27,9 @@ function App() {
   const [isSigning, setIsSigning] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
-
   const handleConnect = async () => {
     if (signer?.isConnected) await signer.disconnect();
     else await signer?.connect();
-  };
-
-  const handleSync = async () => {
-    await sync();
   };
 
   const handleSign = async () => {
@@ -129,56 +102,12 @@ function App() {
           </Section>
         )}
 
-        {/* Miden Account */}
-        {signerAccountId && (
-          <Section title="Miden Account">
-            <StatusRow label="Account ID (hex)" value={signerAccountId} truncate copyable />
-            {bech32AccountId && (
-              <StatusRow label="Address (bech32)" value={bech32AccountId} truncate copyable />
-            )}
-            {accountResult.account && (
-              <>
-                <StatusRow
-                  label="Nonce"
-                  value={accountResult.account.nonce().toString()}
-                />
-                <StatusRow
-                  label="Is Faucet"
-                  value={accountResult.account.isFaucet() ? 'Yes' : 'No'}
-                />
-              </>
-            )}
-          </Section>
-        )}
-
-        {/* Sync State */}
-        {isReady && (
-          <Section title="Sync State">
-            <StatusRow label="Block Height" value={syncHeight.toString()} />
-            <StatusRow label="Syncing" value={isSyncing ? 'Yes' : 'No'} />
-            <StatusRow
-              label="Last Sync"
-              value={lastSyncTime ? new Date(lastSyncTime).toLocaleTimeString() : 'Never'}
-            />
-          </Section>
-        )}
-
-        {/* Balances */}
-        {accountResult.assets.length > 0 && (
-          <Section title="Balances">
-            {accountResult.assets.map((asset) => (
-              <StatusRow
-                key={asset.assetId}
-                label={asset.symbol ?? 'Asset'}
-                value={`${asset.amount.toString()} (${truncate(asset.assetId, 16)})`}
-              />
-            ))}
-          </Section>
-        )}
-
-        {/* Incoming notes — mounted only when sync is idle to avoid WASM borrow conflict */}
-        {isReady && !isSyncing && signerAccountId && (
-          <NotesSection accountId={signerAccountId} onSyncRequest={sync} />
+        {/*
+          Miden-dependent sections: only mount AFTER isReady to prevent WASM
+          borrow conflicts with the init-phase syncState() calls.
+        */}
+        {isReady && signerAccountId && (
+          <MidenDashboard signerAccountId={signerAccountId} sync={sync} />
         )}
 
         {/* Arbitrary message signing — exercises the new signMessage() API */}
@@ -246,10 +175,10 @@ function App() {
           {isReady && (
             <button
               style={styles.buttonSecondary}
-              onClick={handleSync}
-              disabled={isSyncing}
+              onClick={() => sync()}
+              disabled={false}
             >
-              {isSyncing ? 'Syncing...' : 'Sync'}
+              Sync
             </button>
           )}
         </div>
@@ -276,6 +205,83 @@ function App() {
         </details>
       </div>
     </div>
+  );
+}
+
+/**
+ * All Miden-dependent hooks live here so they only mount AFTER init completes.
+ * This prevents useAccount/useSyncState/useNotes from racing with the
+ * init-phase syncState() calls that hold the WASM RefCell borrow.
+ */
+function MidenDashboard({ signerAccountId, sync }: { signerAccountId: string; sync: () => Promise<void> }) {
+  const { syncHeight, isSyncing, lastSyncTime } = useSyncState();
+  const accountResult = useAccount(signerAccountId);
+
+  // Convert hex Account ID to bech32 (what faucets/explorers expect)
+  const [bech32AccountId, setBech32AccountId] = useState<string | null>(null);
+  useEffect(() => {
+    (async () => {
+      try {
+        const { AccountId, Address, NetworkId } = await import('@miden-sdk/miden-sdk');
+        const id = AccountId.fromHex(signerAccountId);
+        const addr = Address.fromAccountId(id, 'BasicWallet');
+        setBech32AccountId(addr.toBech32(NetworkId.devnet()));
+      } catch (e) {
+        console.warn('bech32 conversion failed:', e);
+      }
+    })();
+  }, [signerAccountId]);
+
+  return (
+    <>
+      {/* Miden Account */}
+      <Section title="Miden Account">
+        <StatusRow label="Account ID (hex)" value={signerAccountId} truncate copyable />
+        {bech32AccountId && (
+          <StatusRow label="Address (bech32)" value={bech32AccountId} truncate copyable />
+        )}
+        {accountResult.account && (
+          <>
+            <StatusRow
+              label="Nonce"
+              value={accountResult.account.nonce().toString()}
+            />
+            <StatusRow
+              label="Is Faucet"
+              value={accountResult.account.isFaucet() ? 'Yes' : 'No'}
+            />
+          </>
+        )}
+      </Section>
+
+      {/* Sync State */}
+      <Section title="Sync State">
+        <StatusRow label="Block Height" value={syncHeight.toString()} />
+        <StatusRow label="Syncing" value={isSyncing ? 'Yes' : 'No'} />
+        <StatusRow
+          label="Last Sync"
+          value={lastSyncTime ? new Date(lastSyncTime).toLocaleTimeString() : 'Never'}
+        />
+      </Section>
+
+      {/* Balances */}
+      {accountResult.assets.length > 0 && (
+        <Section title="Balances">
+          {accountResult.assets.map((asset) => (
+            <StatusRow
+              key={asset.assetId}
+              label={asset.symbol ?? 'Asset'}
+              value={`${asset.amount.toString()} (${truncate(asset.assetId, 16)})`}
+            />
+          ))}
+        </Section>
+      )}
+
+      {/* Notes — only when sync is idle */}
+      {!isSyncing && (
+        <NotesSection accountId={signerAccountId} onSyncRequest={sync} />
+      )}
+    </>
   );
 }
 
