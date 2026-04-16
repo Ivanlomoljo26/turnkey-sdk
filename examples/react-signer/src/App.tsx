@@ -325,7 +325,7 @@ function MidenDashboard({ signerAccountId, sync }: { signerAccountId: string; sy
       </Section>
 
       {/* Send tokens */}
-      {!isSyncing && balances.length > 0 && (
+      {!isSyncing && (
         <SendSection
           accountId={signerAccountId}
           balances={balances}
@@ -448,46 +448,41 @@ function SendSection({
   };
 
   return (
-    <details style={styles.section}>
-      <summary style={styles.collapsibleSectionTitle}>
-        Send Tokens
-      </summary>
-      <div style={styles.collapsibleBody}>
-        <label style={styles.label}>Recipient (bech32 address)</label>
-        <input
-          style={styles.input}
-          value={recipient}
-          onChange={(e) => setRecipient(e.target.value)}
-          placeholder="mdev1..."
-        />
-        <label style={styles.label}>Amount</label>
-        <input
-          style={styles.input}
-          value={amount}
-          onChange={(e) => setAmount(e.target.value)}
-          placeholder="e.g. 10"
-          type="number"
-          step="any"
-        />
-        {sendError && (
-          <p style={{ ...styles.errorText, marginTop: '0.5rem' }}>{sendError.message}</p>
-        )}
-        {txId && (
-          <p style={{ color: '#22aa55', fontSize: '0.8rem', marginTop: '0.5rem' }}>
-            Sent! TX: {truncate(txId, 24)}
-          </p>
-        )}
-        <div style={{ ...styles.inlineButtons, marginTop: '0.5rem' }}>
-          <button
-            style={styles.button}
-            onClick={handleSend}
-            disabled={isLoading || !recipient || !amount}
-          >
-            {isLoading ? `Sending... (${stage})` : 'Send'}
-          </button>
-        </div>
+    <Section title="Send Tokens">
+      <label style={styles.label}>Recipient (bech32 address)</label>
+      <input
+        style={styles.input}
+        value={recipient}
+        onChange={(e) => setRecipient(e.target.value)}
+        placeholder="mdev1..."
+      />
+      <label style={styles.label}>Amount</label>
+      <input
+        style={styles.input}
+        value={amount}
+        onChange={(e) => setAmount(e.target.value)}
+        placeholder="e.g. 10"
+        type="number"
+        step="any"
+      />
+      {sendError && (
+        <p style={{ ...styles.errorText, marginTop: '0.5rem' }}>{sendError.message}</p>
+      )}
+      {txId && (
+        <p style={{ color: '#22aa55', fontSize: '0.8rem', marginTop: '0.5rem' }}>
+          Sent! TX: {truncate(txId, 24)}
+        </p>
+      )}
+      <div style={{ ...styles.inlineButtons, marginTop: '0.5rem' }}>
+        <button
+          style={styles.button}
+          onClick={handleSend}
+          disabled={isLoading || !recipient || !amount}
+        >
+          {isLoading ? `Sending... (${stage})` : 'Send'}
+        </button>
       </div>
-    </details>
+    </Section>
   );
 }
 
