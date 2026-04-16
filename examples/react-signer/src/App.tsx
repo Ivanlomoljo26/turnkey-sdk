@@ -369,7 +369,7 @@ function NotesSection({ accountId, onSyncRequest }: { accountId: string; onSyncR
     <Section title="Notes">
       <StatusRow
         label="Consumable"
-        value={isLoading ? 'Loading...' : consumableNotes.length.toString()}
+        value={consumableNotes.length.toString()}
       />
       {consumableNoteSummaries.map((ns) => (
         <div key={ns.id} style={styles.noteItem}>
@@ -392,8 +392,7 @@ function NotesSection({ accountId, onSyncRequest }: { accountId: string; onSyncR
         </button>
         <button
           style={styles.buttonSecondary}
-          onClick={refetch}
-          disabled={isLoading}
+          onClick={onSyncRequest}
         >
           Refresh Notes
         </button>
