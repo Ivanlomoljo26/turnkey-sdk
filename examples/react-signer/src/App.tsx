@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useSigner, useMiden, useAccount, useSyncState, useNotes, useConsume } from '@miden-sdk/react';
 import { useTurnkeySigner } from '@miden-sdk/miden-turnkey-react';
 
@@ -23,6 +23,22 @@ function App() {
 
   // Account details when a signer account exists
   const accountResult = useAccount(signerAccountId ?? undefined);
+
+  // Convert hex Account ID to bech32 (what faucets/explorers expect)
+  const [bech32AccountId, setBech32AccountId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!signerAccountId) { setBech32AccountId(null); return; }
+    (async () => {
+      try {
+        const { AccountId, Address, NetworkId } = await import('@miden-sdk/miden-sdk');
+        const id = AccountId.fromHex(signerAccountId);
+        const addr = Address.fromAccountId(id, 'BasicWallet');
+        setBech32AccountId(addr.toBech32(NetworkId.devnet()));
+      } catch (e) {
+        console.warn('bech32 conversion failed:', e);
+      }
+    })();
+  }, [signerAccountId]);
 
   // Local state for the "sign arbitrary message" demo
   const [rawMessage, setRawMessage] = useState(
@@ -116,7 +132,10 @@ function App() {
         {/* Miden Account */}
         {signerAccountId && (
           <Section title="Miden Account">
-            <StatusRow label="Account ID" value={signerAccountId} truncate copyable />
+            <StatusRow label="Account ID (hex)" value={signerAccountId} truncate copyable />
+            {bech32AccountId && (
+              <StatusRow label="Address (bech32)" value={bech32AccountId} truncate copyable />
+            )}
             {accountResult.account && (
               <>
                 <StatusRow
