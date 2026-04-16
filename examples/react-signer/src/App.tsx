@@ -294,8 +294,8 @@ function MidenDashboard({ signerAccountId, sync }: { signerAccountId: string; sy
         {balances.map((b) => (
           <StatusRow
             key={b.assetId}
-            label="Token"
-            value={`${b.amount} (${truncate(b.assetId, 16)})`}
+            label="Balance"
+            value={b.amount}
           />
         ))}
         {balances.length === 0 && !balanceLoading && (
