@@ -33,25 +33,6 @@ function App() {
   const [isSigning, setIsSigning] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Notes + consume
-  const { consumableNotes, consumableNoteSummaries, isLoading: notesLoading, refetch: refetchNotes } = useNotes();
-  const { consume, isLoading: isConsuming, stage: consumeStage, error: consumeError, reset: resetConsume } = useConsume();
-
-  const handleConsumeAll = async () => {
-    if (!signerAccountId || consumableNotes.length === 0) return;
-    resetConsume();
-    try {
-      const result = await consume({
-        accountId: signerAccountId,
-        notes: consumableNotes.map((n) => n.inputNoteRecord()),
-      });
-      console.log('[Miden] Consumed notes, TX:', result.transactionId);
-      await refetchNotes();
-      await sync();
-    } catch (e) {
-      console.error('[Miden] Consume failed:', e);
-    }
-  };
 
   const handleConnect = async () => {
     if (signer?.isConnected) await signer.disconnect();
@@ -176,41 +157,9 @@ function App() {
           </Section>
         )}
 
-        {/* Incoming notes — consume to credit balance */}
-        {isReady && (
-          <Section title="Notes">
-            <StatusRow
-              label="Consumable"
-              value={notesLoading ? 'Loading...' : consumableNotes.length.toString()}
-            />
-            {consumableNoteSummaries.map((ns) => (
-              <div key={ns.id} style={styles.noteItem}>
-                <span style={styles.noteId}>{truncate(ns.id, 20)}</span>
-                <span style={styles.noteAssets}>
-                  {ns.assets.map((a) => `${a.amount.toString()} ${a.symbol ?? truncate(a.assetId, 10)}`).join(', ') || 'No assets'}
-                </span>
-              </div>
-            ))}
-            {consumeError && (
-              <p style={{ ...styles.errorText, marginTop: '0.5rem' }}>{consumeError.message}</p>
-            )}
-            <div style={{ ...styles.inlineButtons, marginTop: '0.5rem' }}>
-              <button
-                style={styles.button}
-                onClick={handleConsumeAll}
-                disabled={isConsuming || consumableNotes.length === 0}
-              >
-                {isConsuming ? `Consuming... (${consumeStage})` : `Consume All (${consumableNotes.length})`}
-              </button>
-              <button
-                style={styles.buttonSecondary}
-                onClick={refetchNotes}
-                disabled={notesLoading}
-              >
-                Refresh Notes
-              </button>
-            </div>
-          </Section>
+        {/* Incoming notes — mounted only when sync is idle to avoid WASM borrow conflict */}
+        {isReady && !isSyncing && signerAccountId && (
+          <NotesSection accountId={signerAccountId} onSyncRequest={sync} />
         )}
 
         {/* Arbitrary message signing — exercises the new signMessage() API */}
@@ -308,6 +257,67 @@ function App() {
         </details>
       </div>
     </div>
+  );
+}
+
+/**
+ * Separate component so useNotes/useConsume hooks only mount when sync is idle,
+ * preventing concurrent WASM client borrows that trigger the Rust borrow-fail panic.
+ */
+function NotesSection({ accountId, onSyncRequest }: { accountId: string; onSyncRequest: () => Promise<void> }) {
+  const { consumableNotes, consumableNoteSummaries, isLoading, refetch } = useNotes();
+  const { consume, isLoading: isConsuming, stage, error: consumeError, reset } = useConsume();
+
+  const handleConsumeAll = async () => {
+    if (consumableNotes.length === 0) return;
+    reset();
+    try {
+      const result = await consume({
+        accountId,
+        notes: consumableNotes.map((n) => n.inputNoteRecord()),
+      });
+      console.log('[Miden] Consumed notes, TX:', result.transactionId);
+      await refetch();
+      await onSyncRequest();
+    } catch (e) {
+      console.error('[Miden] Consume failed:', e);
+    }
+  };
+
+  return (
+    <Section title="Notes">
+      <StatusRow
+        label="Consumable"
+        value={isLoading ? 'Loading...' : consumableNotes.length.toString()}
+      />
+      {consumableNoteSummaries.map((ns) => (
+        <div key={ns.id} style={styles.noteItem}>
+          <span style={styles.noteId}>{truncate(ns.id, 20)}</span>
+          <span style={styles.noteAssets}>
+            {ns.assets.map((a) => `${a.amount.toString()} ${a.symbol ?? truncate(a.assetId, 10)}`).join(', ') || 'No assets'}
+          </span>
+        </div>
+      ))}
+      {consumeError && (
+        <p style={{ ...styles.errorText, marginTop: '0.5rem' }}>{consumeError.message}</p>
+      )}
+      <div style={{ ...styles.inlineButtons, marginTop: '0.5rem' }}>
+        <button
+          style={styles.button}
+          onClick={handleConsumeAll}
+          disabled={isConsuming || consumableNotes.length === 0}
+        >
+          {isConsuming ? `Consuming... (${stage})` : `Consume All (${consumableNotes.length})`}
+        </button>
+        <button
+          style={styles.buttonSecondary}
+          onClick={refetch}
+          disabled={isLoading}
+        >
+          Refresh Notes
+        </button>
+      </div>
+    </Section>
   );
 }
 
