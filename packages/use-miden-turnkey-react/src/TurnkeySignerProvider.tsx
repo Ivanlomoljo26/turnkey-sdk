@@ -20,7 +20,7 @@ import {
   type SignerContextValue,
   type SignerAccountConfig,
 } from "@miden-sdk/react";
-import { evmPkToCommitment, fromTurnkeySig } from "@miden-sdk/miden-turnkey";
+import { fromTurnkeySig } from "@miden-sdk/miden-turnkey";
 
 // TURNKEY SIGNER PROVIDER
 // ================================================================================================
@@ -360,15 +360,25 @@ function TurnkeySignerProviderInner({
           throw new Error("Account has no public key");
         }
 
-        const commitment = await evmPkToCommitment(compressedPublicKey);
+        // Convert compressed public key hex to bytes
+        const pkBytes = new Uint8Array(
+          compressedPublicKey.match(/.{1,2}/g)!.map((b) => parseInt(b, 16)),
+        );
+
+        // Use the SDK's own PublicKey class to compute the canonical commitment.
+        // The serialization format is: [variant byte] + [key bytes].
+        // Variant 1 = EcdsaK256Keccak (matching the AuthScheme enum).
+        const { PublicKey } = await import("@miden-sdk/miden-sdk");
+        const pubKeySerialBytes = new Uint8Array(1 + pkBytes.length);
+        pubKeySerialBytes[0] = 1; // EcdsaK256Keccak variant
+        pubKeySerialBytes.set(pkBytes, 1);
+        const pubKey = PublicKey.deserialize(pubKeySerialBytes);
+        const commitment = pubKey.toCommitment();
         const commitmentBytes = commitment.serialize();
 
         // Derive a deterministic 32-byte account seed from the public key so
         // the same Turnkey key always produces the same Miden account, even
         // if IndexedDB is cleared between sessions.
-        const pkBytes = new Uint8Array(
-          compressedPublicKey.match(/.{1,2}/g)!.map((b) => parseInt(b, 16)),
-        );
         const accountSeed = new Uint8Array(
           await crypto.subtle.digest("SHA-256", pkBytes),
         );
