@@ -235,7 +235,7 @@ function MidenDashboard({ signerAccountId, sync }: { signerAccountId: string; sy
   }, [signerAccountId]);
 
   // Manual balance fetch — avoids the useAccount hook that races with sync
-  const [balances, setBalances] = useState<{ assetId: string; amount: string }[]>([]);
+  const [balances, setBalances] = useState<{ assetId: string; amount: string; decimals: number }[]>([]);
   const [balanceLoading, setBalanceLoading] = useState(false);
   const [balanceError, setBalanceError] = useState<string | null>(null);
 
@@ -252,11 +252,23 @@ function MidenDashboard({ signerAccountId, sync }: { signerAccountId: string; sy
 
       const vault = account.vault();
       const assets = vault.fungibleAssets();
-      const result: { assetId: string; amount: string }[] = [];
+      const result: { assetId: string; amount: string; decimals: number }[] = [];
       for (const asset of assets) {
+        let decimals = 6; // sensible default
+        try {
+          const { BasicFungibleFaucetComponent } = await import('@miden-sdk/miden-sdk');
+          const faucetAccount = await client.getAccount(asset.faucetId());
+          if (faucetAccount) {
+            const faucetMeta = BasicFungibleFaucetComponent.fromAccount(faucetAccount);
+            decimals = faucetMeta.decimals();
+          }
+        } catch {
+          // faucet metadata unavailable — use default
+        }
         result.push({
           assetId: asset.faucetId().toString(),
           amount: asset.amount().toString(),
+          decimals,
         });
       }
       setBalances(result);
@@ -295,7 +307,7 @@ function MidenDashboard({ signerAccountId, sync }: { signerAccountId: string; sy
           <StatusRow
             key={b.assetId}
             label="Balance"
-            value={b.amount}
+            value={formatTokenAmount(b.amount, b.decimals)}
           />
         ))}
         {balances.length === 0 && !balanceLoading && (
@@ -442,6 +454,14 @@ function StatusRow({
       </span>
     </div>
   );
+}
+
+function formatTokenAmount(raw: string, decimals: number): string {
+  if (decimals === 0) return raw;
+  const padded = raw.padStart(decimals + 1, '0');
+  const intPart = padded.slice(0, padded.length - decimals) || '0';
+  const fracPart = padded.slice(padded.length - decimals).replace(/0+$/, '');
+  return fracPart ? `${intPart}.${fracPart}` : intPart;
 }
 
 function truncate(str: string, maxLen: number): string {
