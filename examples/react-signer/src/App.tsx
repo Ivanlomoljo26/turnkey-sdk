@@ -251,10 +251,9 @@ function MidenDashboard({ signerAccountId, sync }: { signerAccountId: string; sy
       if (!account) throw new Error('Account not found');
 
       const vault = account.vault();
-      const assets = vault.assets();
+      const assets = vault.fungibleAssets();
       const result: { assetId: string; amount: string }[] = [];
-      for (let i = 0; i < assets.length; i++) {
-        const asset = assets[i];
+      for (const asset of assets) {
         result.push({
           assetId: asset.faucetId().toString(),
           amount: asset.amount().toString(),
