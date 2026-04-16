@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { useSigner, useMiden, useAccount, useSyncState, useNotes, useConsume } from '@miden-sdk/react';
+import { useState, useEffect, useCallback } from 'react';
+import { useSigner, useMiden, useSyncState, useNotes, useConsume } from '@miden-sdk/react';
 import { useTurnkeySigner } from '@miden-sdk/miden-turnkey-react';
 
 function App() {
@@ -209,15 +209,16 @@ function App() {
 }
 
 /**
- * All Miden-dependent hooks live here so they only mount AFTER init completes.
- * This prevents useAccount/useSyncState/useNotes from racing with the
- * init-phase syncState() calls that hold the WASM RefCell borrow.
+ * All Miden-dependent UI lives here so it only mounts AFTER init completes.
+ *
+ * NOTE: useAccount is intentionally NOT used — it auto-fires WASM queries on
+ * mount that race with the SDK's internal syncState(), triggering the RefCell
+ * borrow conflict. Instead, balance is fetched on-demand via a manual button.
  */
 function MidenDashboard({ signerAccountId, sync }: { signerAccountId: string; sync: () => Promise<void> }) {
   const { syncHeight, isSyncing, lastSyncTime } = useSyncState();
-  const accountResult = useAccount(signerAccountId);
 
-  // Convert hex Account ID to bech32 (what faucets/explorers expect)
+  // bech32 address
   const [bech32AccountId, setBech32AccountId] = useState<string | null>(null);
   useEffect(() => {
     (async () => {
@@ -232,6 +233,45 @@ function MidenDashboard({ signerAccountId, sync }: { signerAccountId: string; sy
     })();
   }, [signerAccountId]);
 
+  // Manual balance fetch — avoids the useAccount hook that races with sync
+  const [balances, setBalances] = useState<{ assetId: string; amount: string }[]>([]);
+  const [balanceLoading, setBalanceLoading] = useState(false);
+  const [balanceError, setBalanceError] = useState<string | null>(null);
+
+  const fetchBalance = useCallback(async () => {
+    setBalanceLoading(true);
+    setBalanceError(null);
+    try {
+      const { AccountId } = await import('@miden-sdk/miden-sdk');
+      // Access the internal zustand store to get the WASM client
+      const { useMidenStore } = await import('@miden-sdk/react');
+      const client = useMidenStore.getState().client;
+      if (!client) throw new Error('Miden client not available');
+
+      const accountId = AccountId.fromHex(signerAccountId);
+      const account = await client.getAccount(accountId);
+      if (!account) throw new Error('Account not found');
+
+      const vault = account.vault();
+      const assets = vault.assets();
+      const result: { assetId: string; amount: string }[] = [];
+      for (let i = 0; i < assets.length; i++) {
+        const asset = assets[i];
+        result.push({
+          assetId: asset.faucetId().toString(),
+          amount: asset.amount().toString(),
+        });
+      }
+      setBalances(result);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error('[Balance] fetch failed:', msg);
+      setBalanceError(msg);
+    } finally {
+      setBalanceLoading(false);
+    }
+  }, [signerAccountId]);
+
   return (
     <>
       {/* Miden Account */}
@@ -239,18 +279,6 @@ function MidenDashboard({ signerAccountId, sync }: { signerAccountId: string; sy
         <StatusRow label="Account ID (hex)" value={signerAccountId} truncate copyable />
         {bech32AccountId && (
           <StatusRow label="Address (bech32)" value={bech32AccountId} truncate copyable />
-        )}
-        {accountResult.account && (
-          <>
-            <StatusRow
-              label="Nonce"
-              value={accountResult.account.nonce().toString()}
-            />
-            <StatusRow
-              label="Is Faucet"
-              value={accountResult.account.isFaucet() ? 'Yes' : 'No'}
-            />
-          </>
         )}
       </Section>
 
@@ -264,18 +292,28 @@ function MidenDashboard({ signerAccountId, sync }: { signerAccountId: string; sy
         />
       </Section>
 
-      {/* Balances */}
-      {accountResult.assets.length > 0 && (
-        <Section title="Balances">
-          {accountResult.assets.map((asset) => (
-            <StatusRow
-              key={asset.assetId}
-              label={asset.symbol ?? 'Asset'}
-              value={`${asset.amount.toString()} (${truncate(asset.assetId, 16)})`}
-            />
-          ))}
-        </Section>
-      )}
+      {/* Balances — manual fetch to avoid useAccount borrow conflict */}
+      <Section title="Balances">
+        {balances.map((b) => (
+          <StatusRow
+            key={b.assetId}
+            label="Token"
+            value={`${b.amount} (${truncate(b.assetId, 16)})`}
+          />
+        ))}
+        {balances.length === 0 && !balanceLoading && (
+          <StatusRow label="Status" value={balanceError ?? 'Click Check Balance'} isError={!!balanceError} />
+        )}
+        <div style={{ ...styles.inlineButtons, marginTop: '0.5rem' }}>
+          <button
+            style={styles.button}
+            onClick={fetchBalance}
+            disabled={balanceLoading}
+          >
+            {balanceLoading ? 'Fetching...' : 'Check Balance'}
+          </button>
+        </div>
+      </Section>
 
       {/* Notes — only when sync is idle */}
       {!isSyncing && (
