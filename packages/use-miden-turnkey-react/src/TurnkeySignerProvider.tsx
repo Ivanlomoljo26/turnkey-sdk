@@ -363,6 +363,16 @@ function TurnkeySignerProviderInner({
         const commitment = await evmPkToCommitment(compressedPublicKey);
         const commitmentBytes = commitment.serialize();
 
+        // Derive a deterministic 32-byte account seed from the public key so
+        // the same Turnkey key always produces the same Miden account, even
+        // if IndexedDB is cleared between sessions.
+        const pkBytes = new Uint8Array(
+          compressedPublicKey.match(/.{1,2}/g)!.map((b) => parseInt(b, 16)),
+        );
+        const accountSeed = new Uint8Array(
+          await crypto.subtle.digest("SHA-256", pkBytes),
+        );
+
         const signCb = async (_: Uint8Array, signingInputs: Uint8Array) => {
           try {
             const { SigningInputs } = await import("@miden-sdk/miden-sdk");
@@ -386,6 +396,7 @@ function TurnkeySignerProviderInner({
             publicKeyCommitment: commitmentBytes,
             accountType: "RegularAccountImmutableCode",
             storageMode: AccountStorageMode.public(),
+            accountSeed,
             ...(customComponents?.length ? { customComponents } : {}),
             ...(importAccountId ? { importAccountId } : {}),
           },

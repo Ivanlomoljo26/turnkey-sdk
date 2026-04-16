@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useSigner, useMiden, useAccount, useSyncState } from '@miden-sdk/react';
+import { useSigner, useMiden, useAccount, useSyncState, useNotes, useConsume } from '@miden-sdk/react';
 import { useTurnkeySigner } from '@miden-sdk/miden-turnkey-react';
 
 function App() {
@@ -32,6 +32,26 @@ function App() {
   const [signError, setSignError] = useState<string | null>(null);
   const [isSigning, setIsSigning] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Notes + consume
+  const { consumableNotes, consumableNoteSummaries, isLoading: notesLoading, refetch: refetchNotes } = useNotes();
+  const { consume, isLoading: isConsuming, stage: consumeStage, error: consumeError, reset: resetConsume } = useConsume();
+
+  const handleConsumeAll = async () => {
+    if (!signerAccountId || consumableNotes.length === 0) return;
+    resetConsume();
+    try {
+      const result = await consume({
+        accountId: signerAccountId,
+        notes: consumableNotes.map((n) => n.inputNoteRecord()),
+      });
+      console.log('[Miden] Consumed notes, TX:', result.transactionId);
+      await refetchNotes();
+      await sync();
+    } catch (e) {
+      console.error('[Miden] Consume failed:', e);
+    }
+  };
 
   const handleConnect = async () => {
     if (signer?.isConnected) await signer.disconnect();
@@ -153,6 +173,43 @@ function App() {
                 value={`${asset.amount.toString()} (${truncate(asset.assetId, 16)})`}
               />
             ))}
+          </Section>
+        )}
+
+        {/* Incoming notes — consume to credit balance */}
+        {isReady && (
+          <Section title="Notes">
+            <StatusRow
+              label="Consumable"
+              value={notesLoading ? 'Loading...' : consumableNotes.length.toString()}
+            />
+            {consumableNoteSummaries.map((ns) => (
+              <div key={ns.id} style={styles.noteItem}>
+                <span style={styles.noteId}>{truncate(ns.id, 20)}</span>
+                <span style={styles.noteAssets}>
+                  {ns.assets.map((a) => `${a.amount.toString()} ${a.symbol ?? truncate(a.assetId, 10)}`).join(', ') || 'No assets'}
+                </span>
+              </div>
+            ))}
+            {consumeError && (
+              <p style={{ ...styles.errorText, marginTop: '0.5rem' }}>{consumeError.message}</p>
+            )}
+            <div style={{ ...styles.inlineButtons, marginTop: '0.5rem' }}>
+              <button
+                style={styles.button}
+                onClick={handleConsumeAll}
+                disabled={isConsuming || consumableNotes.length === 0}
+              >
+                {isConsuming ? `Consuming... (${consumeStage})` : `Consume All (${consumableNotes.length})`}
+              </button>
+              <button
+                style={styles.buttonSecondary}
+                onClick={refetchNotes}
+                disabled={notesLoading}
+              >
+                Refresh Notes
+              </button>
+            </div>
           </Section>
         )}
 
@@ -438,6 +495,17 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     gap: '0.5rem',
   },
+  noteItem: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '0.25rem 0',
+    borderBottom: '1px solid #eee',
+    fontSize: '0.8rem',
+    fontFamily: 'monospace',
+  },
+  noteId: { color: '#333' },
+  noteAssets: { color: '#666', textAlign: 'right' },
   sigBlock: {
     background: '#fff',
     border: '1px solid #eee',
