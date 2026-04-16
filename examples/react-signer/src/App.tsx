@@ -331,10 +331,8 @@ function MidenDashboard({ signerAccountId, sync }: { signerAccountId: string; sy
         onComplete={fetchBalance}
       />
 
-      {/* Notes — only when sync is idle */}
-      {!isSyncing && (
-        <NotesSection accountId={signerAccountId} onSyncRequest={sync} />
-      )}
+      {/* Notes */}
+      <NotesSection accountId={signerAccountId} onSyncRequest={sync} />
     </>
   );
 }
