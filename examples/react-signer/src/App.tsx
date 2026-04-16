@@ -216,6 +216,7 @@ function App() {
  * borrow conflict. Instead, balance is fetched on-demand via a manual button.
  */
 function MidenDashboard({ signerAccountId, sync }: { signerAccountId: string; sync: () => Promise<void> }) {
+  const { client } = useMiden();
   const { syncHeight, isSyncing, lastSyncTime } = useSyncState();
 
   // bech32 address
@@ -243,9 +244,6 @@ function MidenDashboard({ signerAccountId, sync }: { signerAccountId: string; sy
     setBalanceError(null);
     try {
       const { AccountId } = await import('@miden-sdk/miden-sdk');
-      // Access the internal zustand store to get the WASM client
-      const { useMidenStore } = await import('@miden-sdk/react');
-      const client = useMidenStore.getState().client;
       if (!client) throw new Error('Miden client not available');
 
       const accountId = AccountId.fromHex(signerAccountId);
